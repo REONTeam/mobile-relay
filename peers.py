@@ -59,7 +59,7 @@ class MobilePeers():
         peer["peer"] = me["user"]["number"]
         return me["peer"]
 
-    def wait(self, user: dict):
+    def wait(self, user: dict) -> bool:
         me = self.connected[user["number"]]
         if me["state"] == MobilePeerState.LINKED:
             return me["peer"]
@@ -68,3 +68,7 @@ class MobilePeers():
             return None
         me["state"] = MobilePeerState.WAITING
         return False
+
+    def wait_stop(self, user: dict):
+        me = self.connected[user["number"]]
+        me["state"] = MobilePeerState.CONNECTED

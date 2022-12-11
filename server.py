@@ -3,6 +3,7 @@
 
 import enum
 import json
+import select
 import socketserver
 import time
 
@@ -30,7 +31,6 @@ class MobileRelay(socketserver.BaseRequestHandler):
         self.user_new = False
 
     def finish(self):
-        self.log("Disconnected")
         if self.user:
             self.peers.disconnect(self.user)
         self.users.save()
@@ -97,14 +97,19 @@ class MobileRelay(socketserver.BaseRequestHandler):
 
     def handle_wait(self):
         self.log("Command: WAIT")
+        poller = select.poll()
+        poller.register(self.request, select.POLLIN | select.POLLPRI)
         while True:
-            # TODO: Detect client disconnect
             peer = self.peers.wait(self.user)
             if peer is None:
                 return None
             if peer != False:
                 break
-            time.sleep(0.5)
+
+            # Break out if any data or error is available in the socket
+            if poller.poll(100):
+                self.peers.wait_stop(self.user)
+                return None
         self.send_wait(peer)
         return peer
 
@@ -120,6 +125,9 @@ class MobileRelay(socketserver.BaseRequestHandler):
 
     def handle_relay(self, number: str):
         self.log("Starting relay")
+        # TODO: Fork out a process, close sockets in parent
+        #       This helps avoid GIL locking and would reduce issues
+        #        with many simultaneous clients (assuming no directed abuse).
         peer = self.peers.get_socket(number)
         try:
             while True:
@@ -144,11 +152,16 @@ class MobileRelay(socketserver.BaseRequestHandler):
 
         peer = None
         while peer is None:
-            version = self.request.recv(1)[0]
+            data = self.request.recv(2)
+            if len(data) < 2:
+                self.log("QUIT: Disconnect")
+                break
+
+            version, command = data
             if version != PROTOCOL_VERSION:
                 self.log("QUIT: Invalid command")
-                return
-            command = self.request.recv(1)[0]
+                break
+
             if command == MobileRelayCommand.CALL:
                 peer = self.handle_call()
             elif command == MobileRelayCommand.WAIT:
@@ -159,15 +172,20 @@ class MobileRelay(socketserver.BaseRequestHandler):
                 self.log("QUIT: Invalid command")
                 break
 
-        return self.handle_relay(peer)
+        if peer:
+            return self.handle_relay(peer)
+        return
 
-class MobileRelayServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-    pass
+class Server(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
 
 if __name__ == "__main__":
     HOST, PORT = "localhost", 1027
     g_users = users.MobileUserDatabase("users.json")
     g_peers = peers.MobilePeers(g_users)
-    with MobileRelayServer((HOST, PORT), MobileRelay) as server:
-        server.serve_forever()
+    with Server((HOST, PORT), MobileRelay) as server:
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            server.shutdown()
     g_users.save()

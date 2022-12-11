@@ -7,14 +7,14 @@ class MobileUserDatabase():
     def __init__(self, filename: str):
         self.filename = filename
         self.dirty = False
-        if not self.load():
+        if not self._load():
             self.users = []
-            self.apply()
+            self._apply()
             self.save()
         else:
-            self.lookup_refresh()
+            self._lookup_refresh()
 
-    def load(self):
+    def _load(self):
         try:
             with open(self.filename, "r") as f:
                 self.users = json.load(f)
@@ -22,46 +22,50 @@ class MobileUserDatabase():
             return False
         return True
 
-    def save(self):
-        if not self.dirty:
-            return
-        with open(self.filename, "w") as f:
-            json.dump(self.users, f, indent=4)
-
-    def lookup_refresh(self):
+    def _lookup_refresh(self):
         self.lookup_token = {}
         self.lookup_number = {}
         for user in self.users:
             self.lookup_token[user["token"]] = user
             self.lookup_number[user["number"]] = user
 
-    def apply(self):
+    def _apply(self):
         self.dirty = True
-        self.lookup_refresh()
+        self._lookup_refresh()
 
-    def generate_token(self):
+    def _generate_token(self) -> str:
         # TODO: What to do if we run out of tokens?
         while True:
             token = secrets.token_hex(16)
             if token not in self.lookup_token:
                 return token
 
-    def generate_number(self):
+    def _generate_number(self) -> str:
         # TODO: What to do if we run out of numbers?
+        num = secrets.randbelow(10000000)
         while True:
-            number = "%07d" % secrets.randbelow(10000000)
-            if number not in self.lookup_number:
-                return number
+            string = "%07d" % num
+            if string not in self.lookup_number:
+                return string
+            num += 1
+            if num >= 10000000:
+                num = 0
+
+    def save(self):
+        if not self.dirty:
+            return
+        with open(self.filename, "w") as f:
+            json.dump(self.users, f, indent=4)
 
     def user_new(self):
-        token = self.generate_token()
-        number = self.generate_number()
+        token = self._generate_token()
+        number = self._generate_number()
         user = {
             "token": token,
             "number": number,
         }
         self.users.append(user)
-        self.apply()
+        self._apply()
         return user
 
     def user_lookup_token(self, token: str):
