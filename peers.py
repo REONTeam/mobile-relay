@@ -2,6 +2,7 @@
 
 import enum
 import socket
+import threading
 
 class MobilePeerState(enum.Enum):
     CONNECTED = enum.auto()
@@ -13,22 +14,31 @@ class MobilePeers():
     def __init__(self, users):
         self.users = users
         self.connected = {}
+        self.connected_lock = threading.Lock()
 
     def connect(self, token: str):
-        if token is None:
-            user = self.users.user_new()
-        else:
+        user = None
+        if token:
             user = self.users.user_lookup_token(token)
             if user is None:
                 return None
-        if user["number"] in self.connected:
-            return None
-        self.connected[user["number"]] = {
-            "user": user,
-            "state": MobilePeerState.CONNECTED,
-            "peer": None,
-            "socket": None,
-        }
+
+        # Lock includes user creation to avoid having a different thread log
+        #  into a recently created user.
+        with self.connected_lock:
+            if user is None:
+                user = self.users.user_new()
+                if user is None:
+                    return None
+
+            if user["number"] in self.connected:
+                return None
+            self.connected[user["number"]] = {
+                "user": user,
+                "state": MobilePeerState.CONNECTED,
+                "peer": None,
+                "socket": None,
+            }
         return user
 
     def disconnect(self, user: dict):
@@ -39,7 +49,9 @@ class MobilePeers():
         me["socket"] = socket
 
     def get_socket(self, number: str):
-        peer = self.connected[number]
+        peer = self.connected.get(number)
+        if peer is None:
+            return None
         if peer["state"] != MobilePeerState.LINKED:
             return None
         return peer["socket"]
@@ -59,7 +71,7 @@ class MobilePeers():
         peer["peer"] = me["user"]["number"]
         return me["peer"]
 
-    def wait(self, user: dict) -> bool:
+    def wait(self, user: dict):
         me = self.connected[user["number"]]
         if me["state"] == MobilePeerState.LINKED:
             return me["peer"]

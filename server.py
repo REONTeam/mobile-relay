@@ -129,12 +129,23 @@ class MobileRelay(socketserver.BaseRequestHandler):
         #       This helps avoid GIL locking and would reduce issues
         #        with many simultaneous clients (assuming no directed abuse).
         peer = self.peers.get_socket(number)
+        if peer is None:
+            return
+        poller = select.Poll()
+        poller.register(self.request, select.POLLIN | select.POLLPRI)
+        poller.register(peer, select.POLLRDHUP)
         try:
             while True:
-                data = self.request.recv(1024)
-                if not data:
-                    break
-                peer.send(data)
+                events = poller.poll()
+
+                for fd, event in events:
+                    if fd == self.request:
+                        data = self.request.recv(1024)
+                        if not data:
+                            return
+                        peer.send(data)
+                    elif fd == peer and event & select.POLLRDHUP:
+                        return
         except ConnectionResetError:
             pass
 

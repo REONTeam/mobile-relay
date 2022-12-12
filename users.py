@@ -2,11 +2,13 @@
 
 import json
 import secrets
+import threading
 
 class MobileUserDatabase():
     def __init__(self, filename: str):
         self.filename = filename
         self.dirty = False
+        self.users_lock = threading.Lock()
         if not self._load():
             self.users = []
             self._apply()
@@ -52,24 +54,28 @@ class MobileUserDatabase():
                 num = 0
 
     def save(self):
-        if not self.dirty:
-            return
-        with open(self.filename, "w") as f:
-            json.dump(self.users, f, indent=4)
+        with self.users_lock:
+            if not self.dirty:
+                return
+            with open(self.filename, "w") as f:
+                json.dump(self.users, f, indent=4)
 
     def user_new(self):
-        token = self._generate_token()
-        number = self._generate_number()
-        user = {
-            "token": token,
-            "number": number,
-        }
-        self.users.append(user)
-        self._apply()
+        with self.users_lock:
+            token = self._generate_token()
+            number = self._generate_number()
+            user = {
+                "token": token,
+                "number": number,
+            }
+            self.users.append(user)
+            self._apply()
         return user
 
     def user_lookup_token(self, token: str):
-        return self.lookup_token.get(token)
+        with self.users_lock:
+            return self.lookup_token.get(token)
 
     def user_lookup_number(self, number: str):
-        return self.lookup_number.get(number)
+        with self.users_lock:
+            return self.lookup_number.get(number)
