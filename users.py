@@ -4,7 +4,8 @@ import json
 import secrets
 import threading
 
-class MobileUserDatabase():
+
+class MobileUserDatabase:
     def __init__(self, filename: str):
         self.filename = filename
         self.dirty = False
