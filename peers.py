@@ -9,6 +9,7 @@ class MobilePeerState(enum.Enum):
     CONNECTED = enum.auto()
     CALLING = enum.auto()
     WAITING = enum.auto()
+    LINKING = enum.auto()
     LINKED = enum.auto()
 
 
@@ -16,12 +17,14 @@ class MobilePeer:
     _pair: "MobilePeer | None"
     _user: dict
     _state: MobilePeerState
+    _lock: threading.Lock
     sock: socket.socket | None
 
     def __init__(self, user: dict):
         self._user = user
         self._pair = None
         self._state = MobilePeerState.CONNECTED
+        self._lock = threading.Lock()
         self.sock = None
 
     def get_number(self) -> str:
@@ -39,41 +42,78 @@ class MobilePeer:
     def get_pair_number(self) -> str:
         return self._pair.get_number()
 
-    def call(self, pair: "MobilePeer | None") -> socket.socket | int:
+    def call(self, pair: "MobilePeer | None") -> int:
+        # We've already connected, move along
+        if self._pair is not None:
+            return 1
         if self._state != MobilePeerState.CONNECTED:
-            return 0
+            return 3  # internal
 
         # Make sure the pair is valid
         if pair is None:
             return 0
-        if pair._state != MobilePeerState.WAITING:
+
+        # Lock to make sure no two threads can call the same number at once
+        with pair._lock:
+            if pair._state == MobilePeerState.CONNECTED:
+                return 0
+            if pair._state != MobilePeerState.WAITING:
+                return 2  # busy
+            if pair._pair is not None:
+                return 2  # busy
+
+            # Update states
+            # Once past this barrier, the only way to back away is disconnecting
+            self.set_pair(pair)
+            pair.set_pair(self)
             return 1
 
-        # Update states
-        self.set_pair(pair)
-        self._state = MobilePeerState.LINKED
-        pair.set_pair(self)
-        # TODO: Wait for pair to indicate readiness through pair._state
-        return self.get_pair_socket()
+    def call_ready(self) -> None:
+        # Signal readiness to start relaying
+        if self._state == MobilePeerState.CONNECTED:
+            self._state = MobilePeerState.LINKING
 
-    def wait(self) -> socket.socket | int:
-        # If we've received the call, we're linked
+    def wait(self) -> int:
+        # If we've received the call, move on
         if self._pair is not None:
-            self._state = MobilePeerState.LINKED
-        if self._state == MobilePeerState.LINKED:
-            return self.get_pair_socket()
-
-        # Invalid states
-        if self._state not in (
-                MobilePeerState.CONNECTED, MobilePeerState.WAITING):
             return 1
 
-        self._state = MobilePeerState.WAITING
+        if self._state == MobilePeerState.CONNECTED:
+            self._state = MobilePeerState.WAITING
+        if self._state != MobilePeerState.WAITING:
+            return 2
         return 0
 
-    def wait_stop(self):
+    def wait_ready(self) -> None:
+        # Signal readiness to star relaying
         if self._state == MobilePeerState.WAITING:
-            self._state = MobilePeerState.CONNECTED
+            self._state = MobilePeerState.LINKING
+
+    def accept(self) -> int:
+        # If we've linked, check if the pair is ready
+        # We must do this to avoid writing to the pair's socket before
+        #  the command reply can be sent.
+        if self._state == MobilePeerState.LINKED:
+            return 1
+        if self._state != MobilePeerState.LINKING:
+            return 2
+        if self._pair._state in (MobilePeerState.LINKING,
+                                 MobilePeerState.LINKED):
+            self._state = MobilePeerState.LINKED
+            return 1
+        return 0
+
+    def wait_stop(self) -> bool:
+        # Lock to make sure call() isn't about to read and modify our state
+        with self._lock:
+            if self._pair is not None:
+                return False
+            if self._state == MobilePeerState.CONNECTED:
+                return True
+            if self._state == MobilePeerState.WAITING:
+                self._state = MobilePeerState.CONNECTED
+                return True
+            return False
 
 
 class MobilePeers:

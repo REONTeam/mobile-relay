@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import enum
+import time
 import select
 import socketserver
 import socket
@@ -21,8 +22,14 @@ class MobileRelayCommand(enum.IntEnum):
 
 class MobileRelayCallResult(enum.IntEnum):
     ACCEPTED = 0
-    UNAVAILABLE = enum.auto()
+    INTERNAL = enum.auto()
     BUSY = enum.auto()
+    UNAVAILABLE = enum.auto()
+
+
+class MobileRelayWaitResult(enum.IntEnum):
+    ACCEPTED = 0
+    INTERNAL = enum.auto()
 
 
 class MobileRelay(socketserver.BaseRequestHandler):
@@ -83,43 +90,84 @@ class MobileRelay(socketserver.BaseRequestHandler):
         buffer.append(result)
         self.request.send(buffer)
 
-    def handle_call(self) -> socket.socket | None:
+    def handle_call(self) -> bool:
         number = self.recv_call()
         self.log("Command: CALL %s" % number)
-        peer = self.user.call(self.peers.dial(number))
-        if isinstance(peer, int):
-            if peer == 0:
-                self.send_call(MobileRelayCallResult.UNAVAILABLE)
-            if peer == 1:
-                self.send_call(MobileRelayCallResult.BUSY)
-            return None
-        self.send_call(MobileRelayCallResult.ACCEPTED)
-        return peer
 
-    def send_wait(self, number: str) -> None:
+        poller = select.poll()
+        poller.register(self.request, select.POLLIN | select.POLLPRI)
+
+        # Find an available peer with the correct phone number
+        user = None
+        timer = time.time()
+        while True:
+            # Get peer attached to number
+            if user is None:
+                user = self.peers.dial(number)
+
+            # Try to call the peer
+            if user is not None:
+                res = self.user.call(user)
+                if res == 1:
+                    break
+                elif res == 2:
+                    self.send_call(MobileRelayCallResult.BUSY)
+                    return False
+                elif res == 3:
+                    self.send_call(MobileRelayCallResult.INTERNAL)
+                    raise ConnectionResetError
+                elif res != 0:
+                    self.send_call(MobileRelayCallResult.INTERNAL)
+                    raise ConnectionResetError
+
+            # Time out after a while
+            if (time.time() - timer) >= 30:
+                if user is not None:
+                    self.send_call(MobileRelayCallResult.BUSY)
+                else:
+                    self.send_call(MobileRelayCallResult.UNAVAILABLE)
+                return False
+
+            # If the client sends anything, we can still back out
+            if poller.poll(100):
+                return False
+        self.send_call(MobileRelayCallResult.ACCEPTED)
+        self.user.call_ready()
+        return True
+
+    def send_wait(self, result: MobileRelayWaitResult,
+                  number: str = "") -> None:
         number = number.encode()
         buffer = bytearray([PROTOCOL_VERSION, MobileRelayCommand.WAIT])
+        buffer.append(result)
         buffer.append(len(number))
         buffer += number
         self.request.send(buffer)
 
-    def handle_wait(self):
+    def handle_wait(self) -> bool:
         self.log("Command: WAIT")
+
         poller = select.poll()
         poller.register(self.request, select.POLLIN | select.POLLPRI)
+
+        # Set self into waiting state, break out when called
         while True:
-            peer = self.user.wait()
-            if peer is None:
-                return None
-            if peer != 0:
+            res = self.user.wait()
+            if res == 1:
                 break
+            elif res != 0:
+                self.send_wait(MobileRelayWaitResult.INTERNAL)
+                raise ConnectionResetError
 
             # Break out if any data or error is available in the socket
             if poller.poll(100):
-                self.user.wait_stop()
-                return None
-        self.send_wait(self.user.get_pair_number())
-        return peer
+                if self.user.wait_stop():
+                    return False
+                time.sleep(0.1)
+        self.send_wait(MobileRelayWaitResult.ACCEPTED,
+                       self.user.get_pair_number())
+        self.user.wait_ready()
+        return True
 
     def send_get_number(self):
         number = self.user.get_number().encode()
@@ -132,38 +180,47 @@ class MobileRelay(socketserver.BaseRequestHandler):
         self.log("Command: GET_NUMBER")
         self.send_get_number()
 
-    def handle_relay(self, pair: socket.socket):
+    def handle_relay(self):
+        # Wait until peer is ready to receive data
+        timer = time.time()
+        while True:
+            res = self.user.accept()
+            if res == 1:
+                break
+            if res != 0:
+                raise ConnectionResetError
+            if (time.time() - timer) >= 5:
+                raise ConnectionResetError
+            time.sleep(0.1)
+
         self.log("Starting relay")
         # TODO: Fork out a process, close sockets in parent
         #       This helps avoid the GIL and would reduce issues
         #        with many simultaneous clients (assuming no directed abuse).
+        pair = self.user.get_pair_socket()
         poller = select.poll()
         poller.register(self.request, select.POLLIN | select.POLLPRI)
         poller.register(pair, select.POLLRDHUP)
         try:
-            run = True
-            while run:
+            while True:
                 events = poller.poll()
 
                 for fd, event in events:
                     if fd == self.request.fileno():
                         data = self.request.recv(1024)
                         if not data:
-                            run = False
-                            break
+                            return
                         pair.send(data)
                     elif fd == pair.fileno() and event & select.POLLRDHUP:
-                        run = False
-                        break
-        except ConnectionResetError:
-            pass
-        self.log("QUIT: Disconnect")
+                        return
+        finally:
+            self.log("Quit: Disconnect")
 
     def handle(self):
         self.log("Connected")
 
         if not self.recv_handshake():
-            self.log("QUIT: Login failed")
+            self.log("Quit: Login failed")
             return
         self.send_handshake()
         self.log("Logged in as %s" % self.user.get_number(),
@@ -174,26 +231,24 @@ class MobileRelay(socketserver.BaseRequestHandler):
         while True:
             data = self.request.recv(2)
             if len(data) < 2:
-                self.log("QUIT: Disconnect")
+                self.log("Quit: Disconnect")
                 return
 
             version, command = data
             if version != PROTOCOL_VERSION:
-                self.log("QUIT: Invalid command")
+                self.log("Quit: Invalid command")
                 return
 
             if command == MobileRelayCommand.CALL:
-                pair = self.handle_call()
-                if pair is not None:
-                    return self.handle_relay(pair)
+                if self.handle_call():
+                    return self.handle_relay()
             elif command == MobileRelayCommand.WAIT:
-                pair = self.handle_wait()
-                if pair is not None:
-                    return self.handle_relay(pair)
+                if self.handle_wait():
+                    return self.handle_relay()
             elif command == MobileRelayCommand.GET_NUMBER:
                 self.handle_get_number()
             else:
-                self.log("QUIT: Invalid command")
+                self.log("Quit: Invalid command")
                 return
 
 
