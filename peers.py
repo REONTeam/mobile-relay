@@ -145,6 +145,7 @@ class MobilePeers:
             if user.number in self._connected:
                 return None
 
+            self._users.update(user)
             peer = MobilePeer(user)
             self._connected[peer.get_number()] = peer
         return peer

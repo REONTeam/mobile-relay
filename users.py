@@ -58,6 +58,14 @@ class MobileUserDatabase:
             self._db.commit()
         return MobileUser(token, number)
 
+    def update(self, user: MobileUser):
+        with self._db_write_lock:
+            self._db.execute("""
+                UPDATE "relay_users" SET "last_seen" = CURRENT_TIMESTAMP
+                WHERE "token" = ? AND "number" = ?
+            """, (user.token, user.number))
+            self._db.commit()
+
     def lookup_token(self, token: bytes) -> MobileUser | None:
         res = self._db.execute("""
             SELECT "token", "number" FROM "relay_users" WHERE "token" = ?
