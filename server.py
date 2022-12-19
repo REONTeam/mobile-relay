@@ -5,7 +5,6 @@ import enum
 import time
 import select
 import socketserver
-import socket
 
 import users
 import peers
@@ -38,32 +37,32 @@ class MobileRelay(socketserver.BaseRequestHandler):
     users: users.MobileUserDatabase
     peers: peers.MobilePeers
 
-    def setup(self):
+    def setup(self) -> None:
         self.users = g_users
         self.peers = g_peers
         self.user = None
         self.user_new = False
 
-    def finish(self):
+    def finish(self) -> None:
         if self.user:
             self.peers.disconnect(self.user)
         self.users.save()
 
-    def log(self, *args):
+    def log(self, *args) -> None:
         print(self.client_address, *args)
 
-    def recv_handshake(self):
+    def recv_handshake(self) -> bool:
         handshake = self.request.recv(len(handshake_magic))
         if handshake != handshake_magic:
             return False
 
-        has_token = self.request.recv(1)[0]
+        has_token, = self.request.recv(1)
         self.user_new = False
         if has_token == 0:
             user = self.peers.connect()
             self.user_new = True
         elif has_token == 1:
-            token = self.request.recv(16).hex()
+            token = self.request.recv(16)
             user = self.peers.connect(token)
         else:
             return False
@@ -73,19 +72,19 @@ class MobileRelay(socketserver.BaseRequestHandler):
         self.user = user
         return True
 
-    def send_handshake(self):
+    def send_handshake(self) -> None:
         buffer = bytearray(handshake_magic)
         buffer.append(self.user_new)
         if self.user_new:
-            buffer += bytes.fromhex(self.user.get_token())
+            buffer += self.user.get_token()
         self.request.send(buffer)
 
-    def recv_call(self):
-        number_len = self.request.recv(1)[0]
+    def recv_call(self) -> str | None:
+        number_len, = self.request.recv(1)
         number = self.request.recv(number_len).decode()
         return number
 
-    def send_call(self, result: MobileRelayCallResult):
+    def send_call(self, result: MobileRelayCallResult) -> None:
         buffer = bytearray([PROTOCOL_VERSION, MobileRelayCommand.CALL])
         buffer.append(result)
         self.request.send(buffer)
@@ -169,18 +168,18 @@ class MobileRelay(socketserver.BaseRequestHandler):
         self.user.wait_ready()
         return True
 
-    def send_get_number(self):
+    def send_get_number(self) -> None:
         number = self.user.get_number().encode()
         buffer = bytearray([PROTOCOL_VERSION, MobileRelayCommand.GET_NUMBER])
         buffer.append(len(number))
         buffer += number
         self.request.send(buffer)
 
-    def handle_get_number(self):
+    def handle_get_number(self) -> None:
         self.log("Command: GET_NUMBER")
         self.send_get_number()
 
-    def handle_relay(self):
+    def handle_relay(self) -> None:
         # Wait until peer is ready to receive data
         timer = time.time()
         while True:
@@ -197,11 +196,11 @@ class MobileRelay(socketserver.BaseRequestHandler):
         # TODO: Fork out a process, close sockets in parent
         #       This helps avoid the GIL and would reduce issues
         #        with many simultaneous clients (assuming no directed abuse).
-        pair = self.user.get_pair_socket()
-        poller = select.poll()
-        poller.register(self.request, select.POLLIN | select.POLLPRI)
-        poller.register(pair, select.POLLRDHUP)
         try:
+            pair = self.user.get_pair_socket()
+            poller = select.poll()
+            poller.register(self.request, select.POLLIN | select.POLLPRI)
+            poller.register(pair, select.POLLRDHUP)
             while True:
                 events = poller.poll()
 
@@ -216,7 +215,7 @@ class MobileRelay(socketserver.BaseRequestHandler):
         finally:
             self.log("Quit: Disconnect")
 
-    def handle(self):
+    def handle(self) -> None:
         self.log("Connected")
 
         if not self.recv_handshake():
@@ -258,7 +257,7 @@ class Server(socketserver.ThreadingTCPServer):
 
 if __name__ == "__main__":
     HOST, PORT = "localhost", 1027
-    g_users = users.MobileUserDatabase("users.json")
+    g_users = users.MobileUserDatabase("users.db")
     g_peers = peers.MobilePeers(g_users)
     with Server((HOST, PORT), MobileRelay) as server:
         try:

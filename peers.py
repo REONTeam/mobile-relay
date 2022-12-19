@@ -3,6 +3,7 @@
 import enum
 import socket
 import threading
+import users
 
 
 class MobilePeerState(enum.Enum):
@@ -15,12 +16,12 @@ class MobilePeerState(enum.Enum):
 
 class MobilePeer:
     _pair: "MobilePeer | None"
-    _user: dict
+    _user: users.MobileUser
     _state: MobilePeerState
     _lock: threading.Lock
     sock: socket.socket | None
 
-    def __init__(self, user: dict):
+    def __init__(self, user: users.MobileUser):
         self._user = user
         self._pair = None
         self._state = MobilePeerState.CONNECTED
@@ -28,10 +29,10 @@ class MobilePeer:
         self.sock = None
 
     def get_number(self) -> str:
-        return self._user["number"]
+        return self._user.number
 
-    def get_token(self) -> str:
-        return self._user["token"]
+    def get_token(self) -> bytes:
+        return self._user.token
 
     def set_pair(self, pair: "MobilePeer | None") -> None:
         self._pair = pair
@@ -117,35 +118,39 @@ class MobilePeer:
 
 
 class MobilePeers:
-    def __init__(self, users):
-        self.users = users
-        self.connected = {}
-        self.connected_lock = threading.Lock()
+    _users: users.MobileUserDatabase
+    _connected: dict
+    _connected_lock: threading.Lock
 
-    def connect(self, token: str = "") -> MobilePeer | None:
+    def __init__(self, users_db: users.MobileUserDatabase):
+        self._users = users_db
+        self._connected = {}
+        self._connected_lock = threading.Lock()
+
+    def connect(self, token: bytes = b"") -> MobilePeer | None:
         user = None
         if token:
-            user = self.users.user_lookup_token(token)
+            user = self._users.lookup_token(token)
             if user is None:
                 return None
 
         # Lock includes user creation to avoid having a different thread log
         #  into a recently created user.
-        with self.connected_lock:
+        with self._connected_lock:
             if user is None:
-                user = self.users.user_new()
+                user = self._users.new()
                 if user is None:
                     return None
 
-            if user["number"] in self.connected:
+            if user.number in self._connected:
                 return None
 
             peer = MobilePeer(user)
-            self.connected[peer.get_number()] = peer
+            self._connected[peer.get_number()] = peer
         return peer
 
     def disconnect(self, user: MobilePeer) -> None:
-        del self.connected[user.get_number()]
+        del self._connected[user.get_number()]
 
     def dial(self, number: str) -> MobilePeer | None:
-        return self.connected.get(number)
+        return self._connected.get(number)

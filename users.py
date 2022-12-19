@@ -1,82 +1,77 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-import json
 import secrets
 import threading
+import dataclasses
+import sqlite3
+
+
+@dataclasses.dataclass
+class MobileUser:
+    token: bytes
+    number: str
 
 
 class MobileUserDatabase:
+    _db: sqlite3.Connection
+    _db_write_lock: threading.Lock
+
     def __init__(self, filename: str):
-        self.filename = filename
-        self.dirty = False
-        self.users_lock = threading.Lock()
-        if not self._load():
-            self.users = []
-            self._apply()
-            self.save()
-        else:
-            self._lookup_refresh()
+        self._db = sqlite3.connect(filename, check_same_thread=False)
+        self._db_write_lock = threading.Lock()
+        self._create()
 
-    def _load(self):
-        try:
-            with open(self.filename, "r") as f:
-                self.users = json.load(f)
-        except FileNotFoundError:
-            return False
-        return True
+    def save(self):
+        pass
 
-    def _lookup_refresh(self):
-        self.lookup_token = {}
-        self.lookup_number = {}
-        for user in self.users:
-            self.lookup_token[user["token"]] = user
-            self.lookup_number[user["number"]] = user
+    def _create(self):
+        self._db.execute("""
+            CREATE TABLE IF NOT EXISTS "relay_users" (
+                "token"      BLOB NOT NULL UNIQUE,
+                "number"     TEXT NOT NULL UNIQUE,
+                "last_seen"  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                "registered" INTEGER
+            )
+        """)
 
-    def _apply(self):
-        self.dirty = True
-        self._lookup_refresh()
-
-    def _generate_token(self) -> str:
+    def _generate_token(self) -> bytes:
         # TODO: What to do if we run out of tokens?
         while True:
-            token = secrets.token_hex(16)
-            if token not in self.lookup_token:
+            token = secrets.token_bytes(16)
+            if not self.lookup_token(token):
                 return token
 
     def _generate_number(self) -> str:
         # TODO: What to do if we run out of numbers?
-        num = secrets.randbelow(10000000)
         while True:
-            string = "%07d" % num
-            if string not in self.lookup_number:
-                return string
-            num += 1
-            if num >= 10000000:
-                num = 0
+            number = "%07d" % secrets.randbelow(10000000)
+            if not self.lookup_number(number):
+                return number
 
-    def save(self):
-        with self.users_lock:
-            if not self.dirty:
-                return
-            with open(self.filename, "w") as f:
-                json.dump(self.users, f, indent=4)
-
-    def user_new(self):
-        with self.users_lock:
+    def new(self) -> MobileUser | None:
+        with self._db_write_lock:
             token = self._generate_token()
             number = self._generate_number()
-            user = {
-                "token": token,
-                "number": number,
-            }
-            self.users.append(user)
-            self._apply()
-        return user
+            self._db.execute("""
+                INSERT INTO relay_users("token", "number") VALUES(?, ?)
+            """, (token, number))
+            self._db.commit()
+        return MobileUser(token, number)
 
-    def user_lookup_token(self, token: str):
-        with self.users_lock:
-            return self.lookup_token.get(token)
+    def lookup_token(self, token: bytes) -> MobileUser | None:
+        res = self._db.execute("""
+            SELECT "token", "number" FROM "relay_users" WHERE "token" = ?
+        """, (token,))
+        row = res.fetchone()
+        if not row:
+            return None
+        return MobileUser(row[0], row[1])
 
-    def user_lookup_number(self, number: str):
-        with self.users_lock:
-            return self.lookup_number.get(number)
+    def lookup_number(self, number: str) -> MobileUser | None:
+        res = self._db.execute("""
+            SELECT "token", "number" FROM "relay_users" WHERE "number" = ?
+        """, (number,))
+        row = res.fetchone()
+        if not row:
+            return None
+        return MobileUser(row[0], row[1])
