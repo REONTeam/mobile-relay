@@ -69,6 +69,7 @@ class MobileRelay(socketserver.BaseRequestHandler):
         if user is None:
             return False
 
+        user.sock = self.request
         self.user = user
         return True
 
@@ -147,7 +148,8 @@ class MobileRelay(socketserver.BaseRequestHandler):
         self.log("Command: WAIT")
 
         poller = select.poll()
-        poller.register(self.request, select.POLLIN | select.POLLPRI)
+        poller.register(self.user.sock, select.POLLIN)
+        poller.register(self.user.rpipe, select.POLLIN)
 
         # Set self into waiting state, break out when called
         while True:
@@ -158,11 +160,13 @@ class MobileRelay(socketserver.BaseRequestHandler):
                 self.send_wait(MobileRelayWaitResult.INTERNAL)
                 raise ConnectionResetError
 
+            # Wait for any event
+            events = poller.poll()
+
             # Break out if any data or error is available in the socket
-            if poller.poll(100):
+            if any(fd == self.user.sock for fd, _ in events):
                 if self.user.wait_stop():
                     return False
-                time.sleep(0.1)
         self.send_wait(MobileRelayWaitResult.ACCEPTED,
                        self.user.get_pair_number())
         self.user.wait_ready()
@@ -181,16 +185,12 @@ class MobileRelay(socketserver.BaseRequestHandler):
 
     def handle_relay(self) -> None:
         # Wait until peer is ready to receive data
-        timer = time.time()
-        while True:
-            res = self.user.accept()
-            if res == 1:
-                break
-            if res != 0:
-                raise ConnectionResetError
-            if (time.time() - timer) >= 5:
-                raise ConnectionResetError
-            time.sleep(0.1)
+        poller = select.poll()
+        poller.register(self.user.rpipe, select.POLLIN)
+        if not poller.poll(1000):
+            raise ConnectionResetError
+        if self.user.accept() != 1:
+            raise ConnectionResetError
 
         self.log("Starting relay")
         # TODO: Fork out a process, close sockets in parent
@@ -224,8 +224,6 @@ class MobileRelay(socketserver.BaseRequestHandler):
         self.send_handshake()
         self.log("Logged in as %s" % self.user.get_number(),
                  "(new user)" if self.user_new else "")
-
-        self.user.sock = self.request
 
         while True:
             data = self.request.recv(2)

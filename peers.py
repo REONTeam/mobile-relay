@@ -3,6 +3,9 @@
 import enum
 import socket
 import threading
+import select
+import os
+
 import users
 
 
@@ -26,7 +29,21 @@ class MobilePeer:
         self._pair = None
         self._state = MobilePeerState.CONNECTED
         self._lock = threading.Lock()
+        self.rpipe, self.wpipe = os.pipe()
         self.sock = None
+
+    def _pipe_recv(self, delay: int = 0) -> bytes:
+        # Check if any data is available at all
+        p = select.poll()
+        p.register(self.rpipe, select.POLLIN)
+        if not p.poll(delay):
+            return b''
+
+        # Read the data
+        return os.read(self.rpipe, 1)
+
+    def _pipe_send(self, value: int) -> None:
+        os.write(self._pair.wpipe, bytes([value]))
 
     def get_number(self) -> str:
         return self._user.number
@@ -67,17 +84,22 @@ class MobilePeer:
             # Once past this barrier, the only way to back away is disconnecting
             self.set_pair(pair)
             pair.set_pair(self)
+            self._pipe_send(MobilePeerState.WAITING.value)
             return 1
 
     def call_ready(self) -> None:
         # Signal readiness to start relaying
         if self._state == MobilePeerState.CONNECTED:
             self._state = MobilePeerState.LINKING
+            self._pipe_send(MobilePeerState.LINKING.value)
 
-    def wait(self) -> int:
+    def wait(self, delay: int = 0) -> int:
         # If we've received the call, move on
         if self._pair is not None:
-            return 1
+            b = self._pipe_recv(delay)
+            if b:
+                if b[0] == MobilePeerState.WAITING.value:
+                    return 1
 
         if self._state == MobilePeerState.CONNECTED:
             self._state = MobilePeerState.WAITING
@@ -86,23 +108,10 @@ class MobilePeer:
         return 0
 
     def wait_ready(self) -> None:
-        # Signal readiness to star relaying
+        # Signal readiness to start relaying
         if self._state == MobilePeerState.WAITING:
             self._state = MobilePeerState.LINKING
-
-    def accept(self) -> int:
-        # If we've linked, check if the pair is ready
-        # We must do this to avoid writing to the pair's socket before
-        #  the command reply can be sent.
-        if self._state == MobilePeerState.LINKED:
-            return 1
-        if self._state != MobilePeerState.LINKING:
-            return 2
-        if self._pair._state in (MobilePeerState.LINKING,
-                                 MobilePeerState.LINKED):
-            self._state = MobilePeerState.LINKED
-            return 1
-        return 0
+            self._pipe_send(MobilePeerState.LINKING.value)
 
     def wait_stop(self) -> bool:
         # Lock to make sure call() isn't about to read and modify our state
@@ -115,6 +124,26 @@ class MobilePeer:
                 self._state = MobilePeerState.CONNECTED
                 return True
             return False
+
+    def accept(self, delay: int = 0) -> int:
+        # If we've linked, check if the pair is ready
+        # We must do this to avoid writing to the pair's socket before
+        #  the command reply can be sent.
+        if self._state == MobilePeerState.LINKED:
+            return 1
+        if self._state != MobilePeerState.LINKING:
+            return 2
+
+        b = self._pipe_recv(delay)
+        if not b:
+            return 0
+        if b[0] != MobilePeerState.LINKING.value:
+            return 2
+        if self._pair._state not in (MobilePeerState.LINKING,
+                                     MobilePeerState.LINKED):
+            return 2
+        self._state = MobilePeerState.LINKED
+        return 1
 
 
 class MobilePeers:
