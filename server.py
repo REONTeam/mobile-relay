@@ -46,7 +46,7 @@ class MobileRelay(socketserver.BaseRequestHandler):
     def finish(self) -> None:
         if self.user:
             self.peers.disconnect(self.user)
-        self.users.save()
+        self.users.close()
 
     def log(self, *args) -> None:
         print(self.client_address, *args)
@@ -257,11 +257,10 @@ class Server(socketserver.ThreadingTCPServer):
 
 if __name__ == "__main__":
     HOST, PORT = "localhost", 1027
-    g_users = users.MobileUserDatabase("users.db")
+    g_users = users.MobileUserDatabase()
     g_peers = peers.MobilePeers(g_users)
     with Server((HOST, PORT), MobileRelay) as server:
         try:
             server.serve_forever()
         except KeyboardInterrupt:
             server.shutdown()
-    g_users.save()

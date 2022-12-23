@@ -128,6 +128,8 @@ class MobilePeers:
         self._connected_lock = threading.Lock()
 
     def connect(self, token: bytes = b"") -> MobilePeer | None:
+        self._users.connect()
+
         user = None
         if token:
             user = self._users.lookup_token(token)
