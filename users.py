@@ -120,36 +120,41 @@ class MobileUserDatabase:
             self._db = DatabaseSQLite(**dbconfig["sqlite"])
         else:
             self._db = DatabaseSQLite(database="users.db")
-
         print("Database:", self._db)
 
         self._db.init()
         self._new_write_lock = threading.Lock()
 
-    def connect(self):
+    def connect(self) -> None:
         self._db.connect()
 
-    def close(self):
+    def close(self) -> None:
         self._db.close()
 
-    def _generate_token(self) -> bytes:
-        # TODO: What to do if we run out of tokens?
-        while True:
+    def _generate_token(self) -> bytes | None:
+        for x in range(10):
             token = secrets.token_bytes(16)
-            if not self.lookup_token(token):
-                return token
+            if self.lookup_token(token):
+                continue
+            return token
+        return None
 
-    def _generate_number(self) -> str:
-        # TODO: What to do if we run out of numbers?
-        while True:
-            number = "%07d" % secrets.randbelow(10000000)
-            if not self.lookup_number(number):
-                return number
+    def _generate_number(self) -> str | None:
+        for x in range(10):
+            number = "0" + "%09d" % secrets.randbelow(1000000000)
+            if number.startswith("010"):
+                continue
+            if self.lookup_number(number):
+                continue
+            return number
+        return None
 
     def new(self) -> MobileUser | None:
         with self._new_write_lock:
             token = self._generate_token()
             number = self._generate_number()
+            if not token or not number:
+                return None
             self._db.insert_user(token, number)
             self._db.commit()
         return MobileUser(token, number)
