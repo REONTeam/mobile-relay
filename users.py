@@ -4,6 +4,7 @@ import secrets
 import threading
 import dataclasses
 import contextlib
+import configparser
 
 import sqlite3
 try:
@@ -24,6 +25,9 @@ class DatabaseSQLBase(threading.local):
     def __init__(self):
         self._db = None
         self._module = None
+
+    def __repr__(self):
+        return self._module.__name__
 
     def _format(self, string):
         return string
@@ -107,18 +111,17 @@ class MobileUserDatabase:
     _db: DatabaseMySQL | DatabaseSQLite
     _db_write_lock: threading.Lock
 
-    def __init__(self):
+    def __init__(self, filename):
+        dbconfig = configparser.ConfigParser()
+        dbconfig.read(filename)
+        if "mysql" in dbconfig:
+            self._db = DatabaseMySQL(**dbconfig["mysql"])
+        elif "sqlite" in dbconfig:
+            self._db = DatabaseSQLite(**dbconfig["sqlite"])
+        else:
+            self._db = DatabaseSQLite(database="users.db")
 
-        self._db = DatabaseMySQL(
-            host="localhost",
-            user="mobile",
-            passwd="mobile",
-            db="mobile"
-        )
-
-        # self._db = DatabaseSQLite(
-        #     database="users.db"
-        # )
+        print("Database:", self._db)
 
         self._db.init()
         self._new_write_lock = threading.Lock()
