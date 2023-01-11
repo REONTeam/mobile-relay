@@ -33,7 +33,7 @@ class MobileRelayWaitResult(enum.IntEnum):
 
 class MobileRelay(socketserver.BaseRequestHandler):
     user_new: bool
-    user: peers.MobilePeer | None
+    user: "peers.MobilePeer | None"
     users: users.MobileUserDatabase
     peers: peers.MobilePeers
 
@@ -80,7 +80,7 @@ class MobileRelay(socketserver.BaseRequestHandler):
             buffer += self.user.get_token()
         self.request.send(buffer)
 
-    def recv_call(self) -> str | None:
+    def recv_call(self) -> "str | None":
         number_len, = self.request.recv(1)
         number = self.request.recv(number_len).decode()
         return number

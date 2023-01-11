@@ -22,7 +22,7 @@ class MobilePeer:
     _user: users.MobileUser
     _state: MobilePeerState
     _lock: threading.Lock
-    sock: socket.socket | None
+    sock: "socket.socket | None"
 
     def __init__(self, user: users.MobileUser):
         self._user = user
@@ -156,7 +156,7 @@ class MobilePeers:
         self._connected = {}
         self._connected_lock = threading.Lock()
 
-    def connect(self, token: bytes = b"") -> MobilePeer | None:
+    def connect(self, token: bytes = b"") -> "MobilePeer | None":
         self._users.connect()
 
         user = None
@@ -184,5 +184,5 @@ class MobilePeers:
     def disconnect(self, user: MobilePeer) -> None:
         del self._connected[user.get_number()]
 
-    def dial(self, number: str) -> MobilePeer | None:
+    def dial(self, number: str) -> "MobilePeer | None":
         return self._connected.get(number)
