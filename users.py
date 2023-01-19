@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import typing
 import secrets
 import threading
 import dataclasses
@@ -108,7 +109,7 @@ class DatabaseSQLite(DatabaseSQLBase):
 
 
 class MobileUserDatabase:
-    _db: "DatabaseMySQL | DatabaseSQLite"
+    _db: typing.Union[DatabaseMySQL, DatabaseSQLite]
     _db_write_lock: threading.Lock
 
     def __init__(self, filename):
@@ -131,7 +132,7 @@ class MobileUserDatabase:
     def close(self) -> None:
         self._db.close()
 
-    def _generate_token(self) -> "bytes | None":
+    def _generate_token(self) -> typing.Optional[bytes]:
         for x in range(10):
             token = secrets.token_bytes(16)
             if self.lookup_token(token):
@@ -139,7 +140,7 @@ class MobileUserDatabase:
             return token
         return None
 
-    def _generate_number(self) -> "str | None":
+    def _generate_number(self) -> typing.Optional[str]:
         for x in range(10):
             number = "0" + "%09d" % secrets.randbelow(1000000000)
             if number.startswith("010"):
@@ -149,7 +150,7 @@ class MobileUserDatabase:
             return number
         return None
 
-    def new(self) -> "MobileUser | None":
+    def new(self) -> typing.Optional[MobileUser]:
         with self._new_write_lock:
             token = self._generate_token()
             number = self._generate_number()
@@ -163,13 +164,13 @@ class MobileUserDatabase:
         self._db.update_timestamp(user.token, user.number)
         self._db.commit()
 
-    def lookup_token(self, token: bytes) -> "MobileUser | None":
+    def lookup_token(self, token: bytes) -> typing.Optional[MobileUser]:
         row = self._db.lookup_token(token)
         if not row:
             return None
         return MobileUser(row[0], row[1])
 
-    def lookup_number(self, number: str) -> "MobileUser | None":
+    def lookup_number(self, number: str) -> typing.Optional[MobileUser]:
         row = self._db.lookup_number(number)
         if not row:
             return None

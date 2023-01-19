@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+
+import typing
 import unittest
 import socket
 from server import PROTOCOL_VERSION, handshake_magic, MobileRelayCommand, \
@@ -6,14 +8,16 @@ from server import PROTOCOL_VERSION, handshake_magic, MobileRelayCommand, \
 
 
 class MobileRelayClient:
-    def __init__(self, token: bytes = None):
+    sock: typing.Optional[socket.socket]
+
+    def __init__(self, token: typing.Optional[bytes] = None):
         self.sock = None
         self.token = token
         self.connect()
 
     def connect(self) -> None:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect(("127.0.0.1", 1027))
+        self.sock.connect(("127.0.0.1", 31227))
 
     def close(self) -> None:
         if self.sock:
@@ -29,7 +33,7 @@ class MobileRelayClient:
             buffer.append(0)
         self.sock.send(buffer)
 
-    def recv_handshake(self) -> bytes | None:
+    def recv_handshake(self) -> typing.Optional[bytes]:
         handshake = self.sock.recv(len(handshake_magic))
         assert handshake == handshake_magic
         new_token, = self.sock.recv(1)
@@ -42,10 +46,10 @@ class MobileRelayClient:
         return None
 
     def send_call(self, number: str) -> None:
-        number = number.encode()
+        encnum = number.encode()
         buffer = bytearray([PROTOCOL_VERSION, MobileRelayCommand.CALL])
-        buffer.append(len(number))
-        buffer += number
+        buffer.append(len(encnum))
+        buffer += encnum
         self.sock.send(buffer)
 
     def recv_call(self) -> MobileRelayCallResult:
@@ -58,7 +62,7 @@ class MobileRelayClient:
         buffer = bytearray([PROTOCOL_VERSION, MobileRelayCommand.WAIT])
         self.sock.send(buffer)
 
-    def recv_wait(self) -> (MobileRelayCallResult, str):
+    def recv_wait(self) -> tuple[MobileRelayWaitResult, str]:
         recv = self.sock.recv(4)
         assert recv[0] == PROTOCOL_VERSION
         assert recv[1] == MobileRelayCommand.WAIT

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import typing
 import enum
 import time
 import select
@@ -33,7 +34,7 @@ class MobileRelayWaitResult(enum.IntEnum):
 
 class MobileRelay(socketserver.BaseRequestHandler):
     user_new: bool
-    user: "peers.MobilePeer | None"
+    user: typing.Optional[peers.MobilePeer]
     users: users.MobileUserDatabase
     peers: peers.MobilePeers
 
@@ -80,8 +81,10 @@ class MobileRelay(socketserver.BaseRequestHandler):
             buffer += self.user.get_token()
         self.request.send(buffer)
 
-    def recv_call(self) -> "str | None":
+    def recv_call(self) -> typing.Optional[str]:
         number_len, = self.request.recv(1)
+        if not number_len:
+            return None
         number = self.request.recv(number_len).decode()
         return number
 
@@ -92,6 +95,8 @@ class MobileRelay(socketserver.BaseRequestHandler):
 
     def handle_call(self) -> bool:
         number = self.recv_call()
+        if number is None:
+            return False
         self.log("Command: CALL %s" % number)
 
         poller = select.poll()
@@ -137,11 +142,11 @@ class MobileRelay(socketserver.BaseRequestHandler):
 
     def send_wait(self, result: MobileRelayWaitResult,
                   number: str = "") -> None:
-        number = number.encode()
+        encnum = number.encode()
         buffer = bytearray([PROTOCOL_VERSION, MobileRelayCommand.WAIT])
         buffer.append(result)
-        buffer.append(len(number))
-        buffer += number
+        buffer.append(len(encnum))
+        buffer += encnum
         self.request.send(buffer)
 
     def handle_wait(self) -> bool:

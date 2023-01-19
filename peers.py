@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import typing
 import enum
 import socket
 import threading
@@ -18,11 +19,11 @@ class MobilePeerState(enum.Enum):
 
 
 class MobilePeer:
-    _pair: "MobilePeer | None"
+    _pair: "typing.Optional[MobilePeer]"
     _user: users.MobileUser
     _state: MobilePeerState
     _lock: threading.Lock
-    sock: "socket.socket | None"
+    sock: typing.Optional[socket.socket]
 
     def __init__(self, user: users.MobileUser):
         self._user = user
@@ -51,16 +52,16 @@ class MobilePeer:
     def get_token(self) -> bytes:
         return self._user.token
 
-    def set_pair(self, pair: "MobilePeer | None") -> None:
+    def set_pair(self, pair: "typing.Optional[MobilePeer]") -> None:
         self._pair = pair
 
-    def get_pair_socket(self) -> socket.socket:
+    def get_pair_socket(self) -> typing.Optional[socket.socket]:
         return self._pair.sock
 
     def get_pair_number(self) -> str:
         return self._pair.get_number()
 
-    def call(self, pair: "MobilePeer | None") -> int:
+    def call(self, pair: "typing.Optional[MobilePeer]") -> int:
         # We've already connected, move along
         if self._pair is not None:
             return 1
@@ -81,7 +82,8 @@ class MobilePeer:
                 return 2  # busy
 
             # Update states
-            # Once past this barrier, the only way to back away is disconnecting
+            # Once past this barrier, the only way to back away is
+            #  to disconnect from the peer.
             self.set_pair(pair)
             pair.set_pair(self)
             self._pipe_send(MobilePeerState.WAITING.value)
@@ -148,7 +150,7 @@ class MobilePeer:
 
 class MobilePeers:
     _users: users.MobileUserDatabase
-    _connected: dict
+    _connected: dict[str, MobilePeer]
     _connected_lock: threading.Lock
 
     def __init__(self, users_db: users.MobileUserDatabase):
@@ -156,7 +158,7 @@ class MobilePeers:
         self._connected = {}
         self._connected_lock = threading.Lock()
 
-    def connect(self, token: bytes = b"") -> "MobilePeer | None":
+    def connect(self, token: bytes = b"") -> typing.Optional[MobilePeer]:
         self._users.connect()
 
         user = None
@@ -184,5 +186,5 @@ class MobilePeers:
     def disconnect(self, user: MobilePeer) -> None:
         del self._connected[user.get_number()]
 
-    def dial(self, number: str) -> "MobilePeer | None":
+    def dial(self, number: str) -> typing.Optional[MobilePeer]:
         return self._connected.get(number)
