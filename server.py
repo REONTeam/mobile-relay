@@ -259,7 +259,7 @@ class Server(socketserver.ThreadingTCPServer):
 
 
 if __name__ == "__main__":
-    HOST, PORT = "localhost", 31227
+    HOST, PORT = "", 31227
     g_users = users.MobileUserDatabase("config.ini")
     g_peers = peers.MobilePeers(g_users)
     with Server((HOST, PORT), MobileRelay) as server:
