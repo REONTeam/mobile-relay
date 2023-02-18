@@ -169,7 +169,7 @@ class MobileRelay(socketserver.BaseRequestHandler):
             events = poller.poll()
 
             # Break out if any data or error is available in the socket
-            if any(fd == self.user.sock for fd, _ in events):
+            if any(fd == self.user.sock.fileno() for fd, _ in events):
                 if self.user.wait_stop():
                     return False
         self.send_wait(MobileRelayWaitResult.ACCEPTED,

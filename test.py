@@ -85,7 +85,7 @@ class MobileRelayClient:
         return number.decode()
 
 
-class MyTestCase(unittest.TestCase):
+class Tests(unittest.TestCase):
     def test_token(self):
         c = MobileRelayClient()
         c.send_handshake()
