@@ -170,8 +170,9 @@ class MobileRelay(socketserver.BaseRequestHandler):
 
             # Break out if any data or error is available in the socket
             if any(fd == self.user.sock.fileno() for fd, _ in events):
-                if self.user.wait_stop():
-                    return False
+                if not self.user.wait_stop():
+                    raise ConnectionResetError
+                return False
         self.send_wait(MobileRelayWaitResult.ACCEPTED,
                        self.user.get_pair_number())
         self.user.wait_ready()
@@ -202,21 +203,28 @@ class MobileRelay(socketserver.BaseRequestHandler):
         #       This helps avoid the GIL and would reduce issues
         #        with many simultaneous clients (assuming no directed abuse).
         try:
+            mine = self.request
             pair = self.user.get_pair_socket()
+
             poller = select.poll()
-            poller.register(self.request, select.POLLIN | select.POLLPRI)
+            poller.register(mine, select.POLLIN | select.POLLPRI)
             poller.register(pair, select.POLLRDHUP)
             while True:
                 events = poller.poll()
 
                 for fd, event in events:
-                    if fd == self.request.fileno():
-                        data = self.request.recv(1024)
+                    if fd == mine.fileno():
+                        data = mine.recv(1024)
                         if not data:
                             return
                         pair.send(data)
                     elif fd == pair.fileno() and event & select.POLLRDHUP:
                         return
+        except ConnectionResetError:
+            # There's a billion normal circumstances in which a client can
+            #  cause this error instead of returning an empty buffer.
+            # We don't care about them at this point.
+            pass
         finally:
             self.log("Quit: Disconnect")
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import time
 import typing
 import unittest
 import socket
@@ -119,9 +120,48 @@ class Tests(unittest.TestCase):
         c2.sock.send(msg)
         self.assertEqual(c2.sock.recv(16), msg)
         self.assertEqual(c1.sock.recv(16), msg)
+
         c1.close()
         c2.close()
 
+    def test_disconnect_call(self):
+        c = MobileRelayClient()
+        c.send_handshake()
+        self.assertIsNot(c.recv_handshake(), None)
+        c.send_call("1234")
+        time.sleep(0.1)
+        c.close()
+
+    def test_disconnect_wait(self):
+        c = MobileRelayClient()
+        c.send_handshake()
+        self.assertIsNot(c.recv_handshake(), None)
+        c.send_wait()
+        time.sleep(0.1)
+        c.close()
+
+    def test_connerr(self):
+        c = MobileRelayClient()
+        c.send_handshake()
+        c.close()
+
+    def test_connerr_relay(self):
+        c1 = MobileRelayClient()
+        c1.send_handshake()
+        self.assertIsNot(c1.recv_handshake(), None)
+        c1.send_get_number()
+        num = c1.recv_get_number()
+
+        c2 = MobileRelayClient()
+        c2.send_handshake()
+        self.assertIsNot(c2.recv_handshake(), None)
+
+        c2.send_call(num)
+        c1.send_wait()
+        time.sleep(0.2)
+        c1.close()
+        c2.recv_call()
+        c2.close()
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
