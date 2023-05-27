@@ -47,7 +47,6 @@ class MobileRelay(socketserver.BaseRequestHandler):
     def finish(self) -> None:
         if self.user:
             self.peers.disconnect(self.user)
-        self.users.close()
 
     def log(self, *args) -> None:
         print(self.client_address, *args)

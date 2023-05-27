@@ -159,29 +159,28 @@ class MobilePeers:
         self._connected_lock = threading.Lock()
 
     def connect(self, token: bytes = b"") -> typing.Optional[MobilePeer]:
-        self._users.connect()
-
-        user = None
-        if token:
-            user = self._users.lookup_token(token)
-            if user is None:
-                return None
-
-        # Lock includes user creation to avoid having a different thread log
-        #  into a recently created user.
-        with self._connected_lock:
-            if user is None:
-                user = self._users.new()
+        with self._users:
+            user = None
+            if token:
+                user = self._users.lookup_token(token)
                 if user is None:
                     return None
 
-            if user.number in self._connected:
-                return None
+            # Lock includes user creation to avoid having a different thread
+            #  log into a recently created user.
+            with self._connected_lock:
+                if user is None:
+                    user = self._users.new()
+                    if user is None:
+                        return None
 
-            self._users.update(user)
-            peer = MobilePeer(user)
-            self._connected[peer.get_number()] = peer
-        return peer
+                if user.number in self._connected:
+                    return None
+
+                self._users.update(user)
+                peer = MobilePeer(user)
+                self._connected[peer.get_number()] = peer
+            return peer
 
     def disconnect(self, user: MobilePeer) -> None:
         del self._connected[user.get_number()]
