@@ -149,6 +149,8 @@ class MobileUserDatabase:
     def _generate_number(self) -> typing.Optional[str]:
         for x in range(10):
             number = "0" + "%09d" % secrets.randbelow(1000000000)
+            if number.startswith("00"):
+                continue
             if number.startswith("010"):
                 continue
             if self.lookup_number(number):
