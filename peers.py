@@ -33,6 +33,14 @@ class MobilePeer:
         self.rpipe, self.wpipe = os.pipe()
         self.sock = None
 
+    def __del__(self):
+        os.close(self.rpipe)
+        os.close(self.wpipe)
+
+    def close(self):
+        # Allows proper cleaning up of the object...
+        self._pair = None
+
     def _pipe_recv(self, delay: int = 0) -> bytes:
         # Check if any data is available at all
         p = select.poll()
@@ -99,9 +107,11 @@ class MobilePeer:
         # If we've received the call, move on
         if self._pair is not None:
             b = self._pipe_recv(delay)
-            if b:
-                if b[0] == MobilePeerState.WAITING.value:
-                    return 1
+            if not b or len(b) < 1:
+                return 2
+            if b[0] != MobilePeerState.WAITING.value:
+                return 2
+            return 1
 
         if self._state == MobilePeerState.CONNECTED:
             self._state = MobilePeerState.WAITING
@@ -137,7 +147,7 @@ class MobilePeer:
             return 2
 
         b = self._pipe_recv(delay)
-        if not b:
+        if not b or len(b) < 1:
             return 0
         if b[0] != MobilePeerState.LINKING.value:
             return 2
@@ -183,7 +193,8 @@ class MobilePeers:
             return peer
 
     def disconnect(self, user: MobilePeer) -> None:
-        del self._connected[user.get_number()]
+        peer = self._connected.pop(user.get_number())
+        peer.close()
 
     def dial(self, number: str) -> typing.Optional[MobilePeer]:
         return self._connected.get(number)
