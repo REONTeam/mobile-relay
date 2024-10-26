@@ -110,7 +110,7 @@ class DatabaseSQLite(DatabaseSQLBase):
 
 class MobileUserDatabase:
     _db: typing.Union[DatabaseMySQL, DatabaseSQLite]
-    _db_write_lock: threading.Lock
+    _new_write_lock: threading.Lock
 
     def __init__(self, filename):
         dbconfig = configparser.ConfigParser()
